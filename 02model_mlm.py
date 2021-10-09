@@ -61,7 +61,7 @@ class Config:
         self.batch_size = batch_size
         self.patience = patience
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
-        self.max_len_char = max_len_char  # 411+2  todo
+        self.max_len_char = max_len_char  # 408+2  todo
         self.ways_of_mask = ways_of_mask  # dynamic masking
         self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
                                                                     do_lower_case=False)
@@ -256,9 +256,7 @@ if __name__ == '__main__':
 
 
 
-# todo 处理情感为空的样本
-#  类别不平衡
-#  情感取值范围：情感的不平衡，情感强度的不平衡
+# todo 类别不平衡：情感的不平衡、情感强度的不平衡
 #  探索上下文
 
 

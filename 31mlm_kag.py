@@ -106,7 +106,7 @@ for text in df_nodup['content'][1:]:
 
 '''config'''
 class Config:
-    def __init__(self, n_folds=10, n_epochs=20, batch_size=16, patience=3,
+    def __init__(self, n_folds=10, n_epochs=5, batch_size=16, patience=3,
                  lr=2e-5, max_len_char=410, ways_of_mask=2):
         self.n_folds = n_folds
         self.n_epochs = n_epochs

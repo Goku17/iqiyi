@@ -47,6 +47,8 @@ torch.manual_seed(seed)
 
 
 train_df = pd.read_csv('./outputs/train_df.csv', header=0, index_col=None)
+train_df.drop(index=[11275, 11397, 11399], inplace=True)
+train_df.reset_index(drop=True, inplace=True)
 test_df = pd.read_csv('./outputs/test_df.csv', header=0, index_col=None)
 with open('./outputs/char_lis', 'rb') as f:
     char_lis = pickle.load(f)
@@ -157,7 +159,7 @@ class ModelClf(transformers.BertPreTrainedModel):
         out = self.bert_mlm(input_ids=input_ids,
                             attention_mask=attention_mask,
                             token_type_ids=token_type_ids)
-        sample_id = torch.tensor(np.arange(my_config.batch_size), dtype=torch.int64)
+        sample_id = torch.tensor(np.arange(input_ids.shape[0]), dtype=torch.int64)
         out = out.hidden_states[-1][sample_id, out_pos, :]  # shape=(batch_size, hidden_size)
         outa = self.la(out)
         outb = self.lb(out)
@@ -189,7 +191,7 @@ def training(model, train_dataloader, loss_fn, optimizer, scheduler, device):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        scheduler.step()
+        # scheduler.step()
         train_dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses/len(train_dataloader)  # 一个epoch上平均每个样本的损失
 
@@ -266,12 +268,12 @@ def main(df, fold_num, idx_shuffled):
     ]
     optimizer = transformers.AdamW(optimizer_grouped_parameters, lr=my_config.lr)
 
-    # todo
-    num_training_steps = int(train_df.shape[0] / my_config.batch_size * my_config.n_epochs)
-    num_warmup_steps = int(train_df.shape[0] / my_config.batch_size * 0.6)
-    scheduler = transformers.get_linear_schedule_with_warmup(optimizer,
-                                                             num_warmup_steps=num_warmup_steps,
-                                                             num_training_steps=num_training_steps)
+    # num_training_steps = int(train_df.shape[0] / my_config.batch_size * my_config.n_epochs)
+    # num_warmup_steps = int(train_df.shape[0] / my_config.batch_size * 0.6)
+    # scheduler = transformers.get_linear_schedule_with_warmup(optimizer,
+    #                                                          num_warmup_steps=num_warmup_steps,
+    #                                                          num_training_steps=num_training_steps)
+    scheduler = None
 
     early_stopping = EarlyStopping(patience=my_config.patience,
                                    verbose=True,

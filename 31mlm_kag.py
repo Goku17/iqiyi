@@ -188,7 +188,7 @@ def training(model, train_dataloader, optimizer, scheduler, device):
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
-        scheduler.step()
+        # scheduler.step()
         train_dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses/len(train_dataloader)  # 一个epoch上平均每个样本的损失
 
@@ -259,12 +259,12 @@ def main(df, fold_num, idx_shuffled):
     ]
     optimizer = transformers.AdamW(optimizer_grouped_parameters, lr=my_config.lr)
 
-    # todo
-    num_training_steps = int(train_df.shape[0] / my_config.batch_size * my_config.n_epochs)
-    num_warmup_steps = int(train_df.shape[0] / my_config.batch_size * 0.6)
-    scheduler = transformers.get_linear_schedule_with_warmup(optimizer,
-                                                             num_warmup_steps=num_warmup_steps,
-                                                             num_training_steps=num_training_steps)
+    # num_training_steps = int(train_df.shape[0] / my_config.batch_size * my_config.n_epochs)
+    # num_warmup_steps = int(train_df.shape[0] / my_config.batch_size * 0.6)
+    # scheduler = transformers.get_linear_schedule_with_warmup(optimizer,
+    #                                                          num_warmup_steps=num_warmup_steps,
+    #                                                          num_training_steps=num_training_steps)
+    scheduler = None
 
     early_stopping = EarlyStopping(patience=my_config.patience,
                                    verbose=True,

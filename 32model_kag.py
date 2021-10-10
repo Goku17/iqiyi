@@ -9,7 +9,8 @@
 
 '''
 
-
+import sys  # todo
+sys.path.append('../input/dataiqiyi')
 import numpy as np
 import pandas as pd
 import random
@@ -46,15 +47,34 @@ torch.manual_seed(seed)
 # pd.set_option('display.max_rows', None)
 
 
-with open('./outputs/char_lis', 'rb') as f:
+train_df = pd.read_csv('../input/dataiqiyi/train_df.csv', header=0, index_col=None)  # todo
+train_df.drop(index=[11275, 11397, 11399], inplace=True)
+train_df.reset_index(drop=True, inplace=True)
+test_df = pd.read_csv('../input/dataiqiyi/test_df.csv', header=0, index_col=None)
+with open('../input/dataiqiyi/char_lis', 'rb') as f:
     char_lis = pickle.load(f)
-with open('./outputs/context_train_test', 'rb') as f:
-    context_train_test = pickle.load(f)
+
+
+# 删除情感为空的样本
+drop_idx_train = [i for i, j in enumerate(train_df['emotions']) if type(j) != type('str')]
+train_df.drop(index=drop_idx_train, inplace=True)
+train_df.reset_index(drop=True, inplace=True)
+
+# 处理emotions
+emo_train = train_df['emotions'].str.split(',', expand=True)
+emo_train.columns = ['emo_a', 'emo_b', 'emo_c', 'emo_d', 'emo_e', 'emo_f']
+emo_train['emo_a'] = pd.to_numeric(emo_train['emo_a'])
+emo_train['emo_b'] = pd.to_numeric(emo_train['emo_b'])
+emo_train['emo_c'] = pd.to_numeric(emo_train['emo_c'])
+emo_train['emo_d'] = pd.to_numeric(emo_train['emo_d'])
+emo_train['emo_e'] = pd.to_numeric(emo_train['emo_e'])
+emo_train['emo_f'] = pd.to_numeric(emo_train['emo_f'])
+train_df = pd.concat([train_df, emo_train], axis=1)
 
 
 '''config'''
 class Config:
-    def __init__(self, n_folds=10, n_epochs=5, batch_size=16, patience=3,
+    def __init__(self, n_folds=5, n_epochs=7, batch_size=16, patience=3,
                  lr=2e-5, max_len_char=410, ways_of_mask=2):
         self.n_folds = n_folds
         self.n_epochs = n_epochs
@@ -63,8 +83,8 @@ class Config:
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
         self.max_len_char = max_len_char  # 408+2  todo
         self.ways_of_mask = ways_of_mask  # dynamic masking
-        self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
-                                                                    do_lower_case=False)
+        self.tokenizer = transformers.BertTokenizer.from_pretrained('../input/hflchineserobertawwmext',
+                                                                    do_lower_case=False)  # todo
         self.tokenizer.add_tokens(char_lis)  # todo
 
 
@@ -74,6 +94,13 @@ my_config = Config()
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, df):
         self.text = df['content']
+        self.char = df["character"]
+        self.emo_a = df["emo_a"]
+        self.emo_b = df["emo_b"]
+        self.emo_c = df["emo_c"]
+        self.emo_d = df["emo_d"]
+        self.emo_e = df["emo_e"]
+        self.emo_f = df["emo_f"]
         self.tokenizer = my_config.tokenizer
 
     def __len__(self):
@@ -81,48 +108,71 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, item):
         text = self.text[item]
-        text = self.tokenizer.tokenize(text)
-        masked_text = ''
-        labels = []
-        for char in text:
-            r1 = np.random.rand()
-            if r1 < 0.15:
-                id = self.tokenizer.convert_tokens_to_ids([char])
-                labels.append(id[0])
-                r2 = np.random.rand()
-                if r2 < 0.8:
-                    masked_text += '[MASK]'
-                elif r2 < 0.9:
-                    masked_text += char
-                else:
-                    char_rand = random.choice(text)
-                    masked_text += char_rand
-            else:
-                masked_text += char
-                labels.append(-100)
+        char = self.char[item]
+        emo_a = self.emo_a[item]
+        emo_b = self.emo_b[item]
+        emo_c = self.emo_c[item]
+        emo_d = self.emo_d[item]
+        emo_e = self.emo_e[item]
+        emo_f = self.emo_f[item]
 
-        encoded_inputs = self.tokenizer(masked_text,
+        encoded_inputs = self.tokenizer(text,
                                         padding='max_length',
                                         truncation=True,
                                         max_length=my_config.max_len_char)
-        # 在labels的首尾添加101和102对应的标签；对labels截断补全
-        length = len(encoded_inputs['input_ids'])
-        if len(labels) > length - 2:
-            labels = [-100] + labels[:length - 2] + [-100]
+        if isinstance(char, str):
+            char_id = self.tokenizer.convert_tokens_to_ids(char)
+            out_pos = encoded_inputs["input_ids"].index(char_id)
         else:
-            pad_length = length - 1 - len(labels)
-            labels = [-100] + labels + [-100] * pad_length
+            out_pos = 0
+
 
         return {
-            'input_ids': torch.tensor(encoded_inputs['input_ids'], dtype=torch.int64),
-            'token_type_ids': torch.tensor(encoded_inputs['token_type_ids'], dtype=torch.int64),
-            'attention_mask': torch.tensor(encoded_inputs['attention_mask'], dtype=torch.int64),
-            'labels': torch.tensor(labels, dtype=torch.int64)
+            "input_ids": torch.tensor(encoded_inputs["input_ids"], dtype=torch.int64),
+            "token_type_ids": torch.tensor(encoded_inputs["token_type_ids"], dtype=torch.int64),
+            "attention_mask": torch.tensor(encoded_inputs["attention_mask"], dtype=torch.int64),
+            "out_pos": torch.tensor(out_pos, dtype=torch.int64),
+            "emo_a": torch.tensor(emo_a, dtype=torch.int64),
+            "emo_b": torch.tensor(emo_b, dtype=torch.int64),
+            "emo_c": torch.tensor(emo_c, dtype=torch.int64),
+            "emo_d": torch.tensor(emo_d, dtype=torch.int64),
+            "emo_e": torch.tensor(emo_e, dtype=torch.int64),
+            "emo_f": torch.tensor(emo_f, dtype=torch.int64)
         }
 
 
+class ModelClf(transformers.BertPreTrainedModel):
+    '''为每一种情感训练一个分类器'''
+    def __init__(self, config):
+        super(ModelClf, self).__init__(config)
+        self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('../input/hflchineserobertawwmext',
+                                                                     config=config)  # 哈工大预训练模型 todo
+        self.bert_mlm.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
+        self.bert_mlm.load_state_dict(torch.load('../input/iqiyi-cp/mlm_checkpoint0.pt'))  # todo
+        self.la = torch.nn.Linear(768, 4)
+        self.lb = torch.nn.Linear(768, 4)
+        self.lc = torch.nn.Linear(768, 4)
+        self.ld = torch.nn.Linear(768, 4)
+        self.le = torch.nn.Linear(768, 4)
+        self.lf = torch.nn.Linear(768, 4)
+
+    def forward(self, input_ids, attention_mask, token_type_ids, out_pos):
+        out = self.bert_mlm(input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids)
+        sample_id = torch.tensor(np.arange(input_ids.shape[0]), dtype=torch.int64)
+        out = out.hidden_states[-1][sample_id, out_pos, :]  # shape=(batch_size, hidden_size)
+        outa = self.la(out)
+        outb = self.lb(out)
+        outc = self.lc(out)
+        outd = self.ld(out)
+        oute = self.le(out)
+        outf = self.lf(out)
+        return outa, outb, outc, outd, oute, outf
+
+
 '''training：定义一个epoch上的训练'''
-def training(model, train_dataloader, optimizer, scheduler, device):
+def training(model, train_dataloader, loss_fn, optimizer, scheduler, device):
     model.train()
     train_dataloader_tqdm = tqdm.tqdm(train_dataloader)
     losses = 0
@@ -130,8 +180,14 @@ def training(model, train_dataloader, optimizer, scheduler, device):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
-                        labels=data['labels'].to(device=device))
-        loss = outputs.loss
+                        out_pos=data['out_pos'].to(device=device))
+        lossa = loss_fn(outputs[0], data['emo_a'].to(device=device))
+        lossb = loss_fn(outputs[1], data['emo_b'].to(device=device))
+        lossc = loss_fn(outputs[2], data['emo_c'].to(device=device))
+        lossd = loss_fn(outputs[3], data['emo_d'].to(device=device))
+        losse = loss_fn(outputs[4], data['emo_e'].to(device=device))
+        lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
+        loss = lossa + lossb + lossc + lossd +losse+ lossf
         losses += loss.item()
         optimizer.zero_grad()
         loss.backward()
@@ -142,20 +198,27 @@ def training(model, train_dataloader, optimizer, scheduler, device):
 
 
 '''evaluating：定义一个epoch上的evaluating'''
-def evaluating(model, val_dataloader, device):
+def evaluating(model, val_dataloader, loss_fn, device):
     model.eval()
     with torch.no_grad():
         val_dataloader_tqdm = tqdm.tqdm(val_dataloader)
         losses_val = 0
         for data in val_dataloader_tqdm:
             outputs = model(input_ids=data['input_ids'].to(device=device),
-                            attention_mask=data['attention_mask'].to(device=device),
-                            token_type_ids=data['token_type_ids'].to(device=device),
-                            labels=data['labels'].to(device=device))
-            loss = outputs.loss
+                        attention_mask=data['attention_mask'].to(device=device),
+                        token_type_ids=data['token_type_ids'].to(device=device),
+                        out_pos=data['out_pos'].to(device=device))
+            lossa = loss_fn(outputs[0], data['emo_a'].to(device=device))
+            lossb = loss_fn(outputs[1], data['emo_b'].to(device=device))
+            lossc = loss_fn(outputs[2], data['emo_c'].to(device=device))
+            lossd = loss_fn(outputs[3], data['emo_d'].to(device=device))
+            losse = loss_fn(outputs[4], data['emo_e'].to(device=device))
+            lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
+            loss = lossa + lossb + lossc + lossd + losse + lossf
             losses_val += loss.item()
             val_dataloader_tqdm.set_postfix({'loss': loss.item()})
     return losses_val/len(val_dataloader)
+
 
 
 def main(df, fold_num, idx_shuffled):
@@ -191,10 +254,9 @@ def main(df, fold_num, idx_shuffled):
                                                  shuffle=False)
 
     ########## model ##########
-    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
-    model = transformers.BertForMaskedLM.from_pretrained('inputs/chinese-roberta-wwm-ext',
-                                                         config=model_config)  # 哈工大预训练模型
-    model.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
+    model_config = transformers.BertConfig.from_pretrained('../input/hflchineserobertawwmext/config.json')
+    model_config.output_hidden_states = True
+    model = ModelClf(config=model_config)
     model = model.to(device=device)
 
     ########## optimizer & scheduler ##########
@@ -216,7 +278,9 @@ def main(df, fold_num, idx_shuffled):
 
     early_stopping = EarlyStopping(patience=my_config.patience,
                                    verbose=True,
-                                   path='./outputs/mlm_checkpoint%d.pt' % fold_num)
+                                   path='./outputs/modelv1_checkpoint%d.pt' % fold_num)
+    loss_fn = nn.CrossEntropyLoss()
+
     epoch_record = None
     for epoch in range(1, my_config.n_epochs+1):
         epoch_record = epoch
@@ -226,8 +290,8 @@ def main(df, fold_num, idx_shuffled):
         torch.cuda.manual_seed(seed)
         torch.manual_seed(seed)
 
-        training(model, train_dataloader, optimizer, scheduler, device)
-        loss_val = evaluating(model, val_dataloader, device)
+        training(model, train_dataloader, loss_fn, optimizer, scheduler, device)
+        loss_val = evaluating(model, val_dataloader, loss_fn, device)
         early_stopping(loss_val, model)
         if early_stopping.early_stop:
             print("Early stopping")
@@ -240,12 +304,12 @@ def main(df, fold_num, idx_shuffled):
 
 
 if __name__ == '__main__':
-    df = pd.DataFrame(context_train_test, columns=['content'])  # 使用所有数据集
+    df = train_df
     idx_shuffled = np.random.permutation(df.shape[0])  # 保证只打乱一次下标
 
     val_losses = []
     epoch_counts = []
-    for k in range(1):  # todo
+    for k in range(1):  # todo my_config.n_folds
         val_loss, epoch_count = main(df=df, fold_num=k, idx_shuffled=idx_shuffled)
         val_losses.append(val_loss)
         epoch_counts.append(epoch_count)
@@ -254,17 +318,3 @@ if __name__ == '__main__':
     print(epoch_counts)
 
 
-
-
-# todo 类别不平衡：情感的不平衡、情感强度的不平衡
-#  探索上下文
-
-
-# todo add_tokens
-
-
-
-'''
-分h3
-连t2
-'''

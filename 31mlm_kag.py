@@ -106,14 +106,14 @@ for text in df_nodup['content'][1:]:
 
 '''config'''
 class Config:
-    def __init__(self, n_folds=10, n_epochs=5, batch_size=16, patience=3,
+    def __init__(self, n_folds=10, n_epochs=7, batch_size=16, patience=3,
                  lr=2e-5, max_len_char=410, ways_of_mask=2):
         self.n_folds = n_folds
         self.n_epochs = n_epochs
         self.batch_size = batch_size
         self.patience = patience
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
-        self.max_len_char = max_len_char  # 411+2  todo
+        self.max_len_char = max_len_char  # 408+2  todo
         self.ways_of_mask = ways_of_mask  # dynamic masking
         self.tokenizer = transformers.BertTokenizer.from_pretrained('../input/hflchineserobertawwmext',
                                                                     do_lower_case=False)  # todo

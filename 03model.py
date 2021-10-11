@@ -204,9 +204,9 @@ def evaluating(model, val_dataloader, loss_fn, device):
         losses_val = 0
         for data in val_dataloader_tqdm:
             outputs = model(input_ids=data['input_ids'].to(device=device),
-                        attention_mask=data['attention_mask'].to(device=device),
-                        token_type_ids=data['token_type_ids'].to(device=device),
-                        out_pos=data['out_pos'].to(device=device))
+                            attention_mask=data['attention_mask'].to(device=device),
+                            token_type_ids=data['token_type_ids'].to(device=device),
+                            out_pos=data['out_pos'].to(device=device))
             lossa = loss_fn(outputs[0], data['emo_a'].to(device=device))
             lossb = loss_fn(outputs[1], data['emo_b'].to(device=device))
             lossc = loss_fn(outputs[2], data['emo_c'].to(device=device))
@@ -217,7 +217,6 @@ def evaluating(model, val_dataloader, loss_fn, device):
             losses_val += loss.item()
             val_dataloader_tqdm.set_postfix({'loss': loss.item()})
     return losses_val/len(val_dataloader)
-
 
 
 def main(df, fold_num, idx_shuffled):

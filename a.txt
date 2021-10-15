@@ -1,0 +1,11 @@
+diff --git a/zzz3.py b/zzz3.py
+index eaf4a94..e2d38a7 100644
+--- a/zzz3.py
++++ b/zzz3.py
+@@ -1 +1,5 @@
++print('asdfs')
++
++
++print('asdfs')
+ print('asdfs')
+\ No newline at end of file

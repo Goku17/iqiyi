@@ -187,14 +187,14 @@ def training(model, train_dataloader, loss_fn, optimizer, scheduler, device):
         lossd = loss_fn(outputs[3], data['emo_d'].to(device=device))
         losse = loss_fn(outputs[4], data['emo_e'].to(device=device))
         lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
-        loss = lossa + lossb + lossc + lossd +losse+ lossf
+        loss = lossa + lossb + lossc + lossd + losse + lossf
         losses += loss.item()
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         # scheduler.step()
         train_dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
-    return losses/len(train_dataloader)  # 一个epoch上平均每个样本的损失
+    return losses / len(train_dataloader)  # 一个epoch上平均每个样本的损失
 
 
 '''evaluating：定义一个epoch上的evaluating'''
@@ -217,7 +217,7 @@ def evaluating(model, val_dataloader, loss_fn, device):
             loss = lossa + lossb + lossc + lossd + losse + lossf
             losses_val += loss.item()
             val_dataloader_tqdm.set_postfix({'loss': loss.item()})
-    return losses_val/len(val_dataloader)
+    return losses_val / len(val_dataloader)
 
 
 def main(df, fold_num, idx_shuffled):
@@ -281,7 +281,7 @@ def main(df, fold_num, idx_shuffled):
     loss_fn = nn.CrossEntropyLoss()
 
     epoch_record = None
-    for epoch in range(1, my_config.n_epochs+1):
+    for epoch in range(1, my_config.n_epochs + 1):
         epoch_record = epoch
         seed = epoch % my_config.ways_of_mask
         random.seed(seed)

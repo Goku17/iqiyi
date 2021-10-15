@@ -104,3 +104,8 @@ torch.manual_seed(seed)
 # pd.set_option('display.max_columns', None)
 # pd.set_option('display.max_rows', None)
 
+with open('./outputs/char_lis', 'rb') as f:
+    char_lis = pickle.load(f)
+tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
+                                                            do_lower_case=False)
+tokenizer.add_tokens(char_lis)

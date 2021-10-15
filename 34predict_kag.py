@@ -10,6 +10,8 @@
 '''
 
 
+import sys  # todo
+sys.path.append('../input/dataiqiyi')
 import numpy as np
 import pandas as pd
 import random
@@ -46,8 +48,8 @@ torch.manual_seed(seed)
 # pd.set_option('display.max_rows', None)
 
 
-test_df = pd.read_csv('./outputs/test_df.csv', header=0, index_col=None)
-with open('./outputs/char_lis', 'rb') as f:
+test_df = pd.read_csv('../input/dataiqiyi/test_df.csv', header=0, index_col=None)
+with open('../input/dataiqiyi/char_lis', 'rb') as f:
     char_lis = pickle.load(f)
 
 
@@ -62,7 +64,7 @@ class Config:
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
         self.max_len_char = max_len_char  # 408+2  todo
         self.ways_of_mask = ways_of_mask  # dynamic masking
-        self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
+        self.tokenizer = transformers.BertTokenizer.from_pretrained('../input/hflchineserobertawwmext',
                                                                     do_lower_case=False)
         self.tokenizer.add_tokens(char_lis)  # todo
 
@@ -70,7 +72,7 @@ class Config:
 my_config = Config()
 
 
-class Dataset(torch.utils.data.Dataset):
+class TestDataset(torch.utils.data.Dataset):
     def __init__(self, df):
         self.text = df['content']
         self.char = df["character"]
@@ -106,7 +108,7 @@ class ModelClf(transformers.BertPreTrainedModel):
     '''为每一种情感训练一个分类器'''
     def __init__(self, config):
         super(ModelClf, self).__init__(config)
-        self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('inputs/chinese-roberta-wwm-ext',
+        self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('../input/hflchineserobertawwmext',
                                                                      config=config)  # 哈工大预训练模型
         self.bert_mlm.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
         self.la = torch.nn.Linear(768, 4)
@@ -136,13 +138,13 @@ class ModelClf(transformers.BertPreTrainedModel):
 
 def main(test_df, fold_num):
     ########## DataLoader ##########
-    test_dataset = Dataset(test_df)
+    test_dataset = TestDataset(test_df)
     test_dataloader = torch.utils.data.DataLoader(test_dataset,
                                                  batch_size=my_config.batch_size,
                                                  shuffle=False)
 
     ########## model ##########
-    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
+    model_config = transformers.BertConfig.from_pretrained('../input/hflchineserobertawwmext/config.json')
     model_config.output_hidden_states = True
     model = ModelClf(config=model_config)
     model.load_state_dict(torch.load('./outputs/modelv1_checkpoint%d.pt' % fold_num))  # , map_location=torch.device('cpu')

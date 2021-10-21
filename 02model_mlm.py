@@ -54,14 +54,15 @@ with open('./outputs/context_train_test', 'rb') as f:
 
 '''config'''
 class Config:
-    def __init__(self, n_folds=10, n_epochs=7, batch_size=16, patience=3,
+    def __init__(self, n_folds=10, n_epochs=7, batch_size=16, batch_size_accu=256, patience=3,
                  lr=2e-5, max_len_char=410, ways_of_mask=2):
         self.n_folds = n_folds
         self.n_epochs = n_epochs
         self.batch_size = batch_size
+        self.batch_size_accu = batch_size_accu
         self.patience = patience
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
-        self.max_len_char = max_len_char  # 408+2  todo
+        self.max_len_char = max_len_char  # (412-4)+2
         self.ways_of_mask = ways_of_mask  # dynamic masking
         self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
                                                                     do_lower_case=False)
@@ -81,81 +82,74 @@ class Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, item):
         text = self.text[item]
-        text = self.tokenizer.tokenize(text)
-        masked_text = ''
-        labels = []
-        for char in text:
-            r1 = np.random.rand()
-            if r1 < 0.15:
-                id = self.tokenizer.convert_tokens_to_ids([char])
-                labels.append(id[0])
-                r2 = np.random.rand()
-                if r2 < 0.8:
-                    masked_text += '[MASK]'
-                elif r2 < 0.9:
-                    masked_text += char
-                else:
-                    char_rand = random.choice(text)
-                    masked_text += char_rand
-            else:
-                masked_text += char
-                labels.append(-100)
-
-        encoded_inputs = self.tokenizer(masked_text,
+        encoded_inputs = self.tokenizer(text,
                                         padding='max_length',
                                         truncation=True,
                                         max_length=my_config.max_len_char)
-        # 在labels的首尾添加101和102对应的标签；对labels截断补全
-        length = len(encoded_inputs['input_ids'])
-        if len(labels) > length - 2:
-            labels = [-100] + labels[:length - 2] + [-100]
-        else:
-            pad_length = length - 1 - len(labels)
-            labels = [-100] + labels + [-100] * pad_length
+        input_ids = encoded_inputs['input_ids']
+        token_type_ids = encoded_inputs['token_type_ids']
+        attention_mask = encoded_inputs['attention_mask']
+        text_len = sum(attention_mask)-2
+        labels = [-100] * my_config.max_len_char
+        for i in range(1, text_len+1):
+            r1 = np.random.rand()
+            if input_ids[i] != 100 and r1 < 0.15:  # [UNK]不进行mask
+                labels[i] = input_ids[i]
+                r2 = np.random.rand()
+                if r2 < 0.8:
+                    input_ids[i] = 103
+                elif r2 < 0.9:
+                    continue
+                else:
+                    input_ids[i] = random.choice(input_ids[1:text_len+1])
 
         return {
-            'input_ids': torch.tensor(encoded_inputs['input_ids'], dtype=torch.int64),
-            'token_type_ids': torch.tensor(encoded_inputs['token_type_ids'], dtype=torch.int64),
-            'attention_mask': torch.tensor(encoded_inputs['attention_mask'], dtype=torch.int64),
+            'input_ids': torch.tensor(input_ids, dtype=torch.int64),
+            'token_type_ids': torch.tensor(token_type_ids, dtype=torch.int64),
+            'attention_mask': torch.tensor(attention_mask, dtype=torch.int64),
             'labels': torch.tensor(labels, dtype=torch.int64)
         }
 
 
 '''training：定义一个epoch上的训练'''
-def training(model, train_dataloader, optimizer, scheduler, device):
+def training(model, dataloader, optimizer, scheduler, device):
     model.train()
-    train_dataloader_tqdm = tqdm.tqdm(train_dataloader)
+    dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    for data in train_dataloader_tqdm:
+    accu_iter = my_config.batch_size_accu / my_config.batch_size
+    for batch_idx, data in enumerate(dataloader_tqdm):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
                         labels=data['labels'].to(device=device))
         loss = outputs.loss
         losses += loss.item()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        # scheduler.step()
-        train_dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
-    return losses/len(train_dataloader)  # 一个epoch上平均每个样本的损失
+
+        loss = loss / accu_iter
+        loss.backward()  # 可以释放计算图
+        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
+            optimizer.step()
+            optimizer.zero_grad()
+            # scheduler.step()
+        dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
+    return losses/len(dataloader)  # 一个epoch上平均每个样本的损失
 
 
 '''evaluating：定义一个epoch上的evaluating'''
-def evaluating(model, val_dataloader, device):
+def evaluating(model, dataloader, device):
     model.eval()
     with torch.no_grad():
-        val_dataloader_tqdm = tqdm.tqdm(val_dataloader)
+        dataloader_tqdm = tqdm.tqdm(dataloader)
         losses_val = 0
-        for data in val_dataloader_tqdm:
+        for data in dataloader_tqdm:
             outputs = model(input_ids=data['input_ids'].to(device=device),
                             attention_mask=data['attention_mask'].to(device=device),
                             token_type_ids=data['token_type_ids'].to(device=device),
                             labels=data['labels'].to(device=device))
             loss = outputs.loss
             losses_val += loss.item()
-            val_dataloader_tqdm.set_postfix({'loss': loss.item()})
-    return losses_val/len(val_dataloader)
+            dataloader_tqdm.set_postfix({'loss': loss.item()})
+    return losses_val/len(dataloader)
 
 
 def main(df, fold_num, idx_shuffled):
@@ -176,7 +170,6 @@ def main(df, fold_num, idx_shuffled):
 
     train_df = df.iloc[train_idx, :]
     val_df = df.iloc[val_idx, :]
-
     train_df.reset_index(drop=True, inplace=True)
     val_df.reset_index(drop=True, inplace=True)
 
@@ -260,11 +253,7 @@ if __name__ == '__main__':
 #  探索上下文
 
 
-# todo add_tokens
+# todo add_tokens/梯度累计
 
 
 
-'''
-分h3
-连t2
-'''

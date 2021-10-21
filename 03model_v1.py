@@ -1,3 +1,4 @@
+# model_v1不考虑上下文
 '''
 (1)任务：剧本角色情感识别
 (2)评价指标RMSE
@@ -47,15 +48,12 @@ torch.manual_seed(seed)
 
 
 train_df = pd.read_csv('./outputs/train_df.csv', header=0, index_col=None)
-train_df.drop(index=[11275, 11397, 11399], inplace=True)
-train_df.reset_index(drop=True, inplace=True)
 test_df = pd.read_csv('./outputs/test_df.csv', header=0, index_col=None)
 with open('./outputs/char_lis', 'rb') as f:
     char_lis = pickle.load(f)
 
-
 # 删除情感为空的样本
-drop_idx_train = [i for i, j in enumerate(train_df['emotions']) if type(j) != type('str')]
+drop_idx_train = [i for i, j in enumerate(train_df['emotions']) if not isinstance(j, str)]
 train_df.drop(index=drop_idx_train, inplace=True)
 train_df.reset_index(drop=True, inplace=True)
 
@@ -70,17 +68,19 @@ emo_train['emo_e'] = pd.to_numeric(emo_train['emo_e'])
 emo_train['emo_f'] = pd.to_numeric(emo_train['emo_f'])
 train_df = pd.concat([train_df, emo_train], axis=1)
 
-
 '''config'''
+
+
 class Config:
-    def __init__(self, n_folds=5, n_epochs=7, batch_size=16, patience=3,
+    def __init__(self, n_folds=5, n_epochs=7, batch_size=16, batch_size_accu=256, patience=3,
                  lr=2e-5, max_len_char=410, ways_of_mask=2):
         self.n_folds = n_folds
         self.n_epochs = n_epochs
         self.batch_size = batch_size
+        self.batch_size_accu = batch_size_accu
         self.patience = patience
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
-        self.max_len_char = max_len_char  # 408+2  todo
+        self.max_len_char = max_len_char  # (412-4)+2
         self.ways_of_mask = ways_of_mask  # dynamic masking
         self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
                                                                     do_lower_case=False)
@@ -121,10 +121,12 @@ class Dataset(torch.utils.data.Dataset):
                                         max_length=my_config.max_len_char)
         if isinstance(char, str):
             char_id = self.tokenizer.convert_tokens_to_ids(char)
-            out_pos = encoded_inputs["input_ids"].index(char_id)
+            try:
+                out_pos = encoded_inputs["input_ids"].index(char_id)
+            except:
+                out_pos = 0
         else:
             out_pos = 0
-
 
         return {
             "input_ids": torch.tensor(encoded_inputs["input_ids"], dtype=torch.int64),
@@ -142,6 +144,7 @@ class Dataset(torch.utils.data.Dataset):
 
 class ModelClf(transformers.BertPreTrainedModel):
     '''为每一种情感训练一个分类器'''
+
     def __init__(self, config):
         super(ModelClf, self).__init__(config)
         self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('inputs/chinese-roberta-wwm-ext',
@@ -171,11 +174,14 @@ class ModelClf(transformers.BertPreTrainedModel):
 
 
 '''training：定义一个epoch上的训练'''
-def training(model, train_dataloader, loss_fn, optimizer, scheduler, device):
+
+
+def training(model, dataloader, loss_fn, optimizer, scheduler, device):
     model.train()
-    train_dataloader_tqdm = tqdm.tqdm(train_dataloader)
+    dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    for data in train_dataloader_tqdm:
+    accu_iter = my_config.batch_size_accu / my_config.batch_size
+    for batch_idx, data in enumerate(dataloader_tqdm):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
@@ -188,21 +194,26 @@ def training(model, train_dataloader, loss_fn, optimizer, scheduler, device):
         lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
         loss = lossa + lossb + lossc + lossd + losse + lossf
         losses += loss.item()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        # scheduler.step()
-        train_dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
-    return losses / len(train_dataloader)  # 一个epoch上平均每个样本的损失
+
+        loss = loss / accu_iter
+        loss.backward()  # 可以释放计算图
+        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
+            optimizer.step()
+            optimizer.zero_grad()
+            # scheduler.step()
+        dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
+    return losses / len(dataloader)  # 一个epoch上平均每个样本的损失
 
 
 '''evaluating：定义一个epoch上的evaluating'''
-def evaluating(model, val_dataloader, loss_fn, device):
+
+
+def evaluating(model, dataloader, loss_fn, device):
     model.eval()
     with torch.no_grad():
-        val_dataloader_tqdm = tqdm.tqdm(val_dataloader)
+        dataloader_tqdm = tqdm.tqdm(dataloader)
         losses_val = 0
-        for data in val_dataloader_tqdm:
+        for data in dataloader_tqdm:
             outputs = model(input_ids=data['input_ids'].to(device=device),
                             attention_mask=data['attention_mask'].to(device=device),
                             token_type_ids=data['token_type_ids'].to(device=device),
@@ -215,8 +226,8 @@ def evaluating(model, val_dataloader, loss_fn, device):
             lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
             loss = lossa + lossb + lossc + lossd + losse + lossf
             losses_val += loss.item()
-            val_dataloader_tqdm.set_postfix({'loss': loss.item()})
-    return losses_val / len(val_dataloader)
+            dataloader_tqdm.set_postfix({'loss': loss.item()})
+    return losses_val / len(dataloader)
 
 
 def main(df, fold_num, idx_shuffled):
@@ -237,7 +248,6 @@ def main(df, fold_num, idx_shuffled):
 
     train_df = df.iloc[train_idx, :]
     val_df = df.iloc[val_idx, :]
-
     train_df.reset_index(drop=True, inplace=True)
     val_df.reset_index(drop=True, inplace=True)
 
@@ -282,12 +292,6 @@ def main(df, fold_num, idx_shuffled):
     epoch_record = None
     for epoch in range(1, my_config.n_epochs + 1):
         epoch_record = epoch
-        seed = epoch % my_config.ways_of_mask
-        random.seed(seed)
-        np.random.seed(seed)
-        torch.cuda.manual_seed(seed)
-        torch.manual_seed(seed)
-
         training(model, train_dataloader, loss_fn, optimizer, scheduler, device)
         loss_val = evaluating(model, val_dataloader, loss_fn, device)
         early_stopping(loss_val, model)
@@ -301,6 +305,90 @@ def main(df, fold_num, idx_shuffled):
         return early_stopping.val_loss_min, my_config.n_epochs
 
 
+'''predict'''
+
+
+class TestDataset(torch.utils.data.Dataset):
+    def __init__(self, df):
+        self.text = df['content']
+        self.char = df["character"]
+        self.tokenizer = my_config.tokenizer
+
+    def __len__(self):
+        return len(self.text)
+
+    def __getitem__(self, item):
+        text = self.text[item]
+        char = self.char[item]
+
+        encoded_inputs = self.tokenizer(text,
+                                        padding='max_length',
+                                        truncation=True,
+                                        max_length=my_config.max_len_char)
+        if isinstance(char, str):
+            char_id = self.tokenizer.convert_tokens_to_ids(char)
+            try:
+                out_pos = encoded_inputs["input_ids"].index(char_id)
+            except:
+                out_pos = 0
+        else:
+            out_pos = 0
+
+        return {
+            "input_ids": torch.tensor(encoded_inputs["input_ids"], dtype=torch.int64),
+            "token_type_ids": torch.tensor(encoded_inputs["token_type_ids"], dtype=torch.int64),
+            "attention_mask": torch.tensor(encoded_inputs["attention_mask"], dtype=torch.int64),
+            "out_pos": torch.tensor(out_pos, dtype=torch.int64)
+        }
+
+
+def predicting(model, dataloader, device):
+    model.eval()
+    with torch.no_grad():
+        results = []
+        dataloader_tqdm = tqdm.tqdm(dataloader)
+        for data in dataloader_tqdm:
+            outputs = model(input_ids=data['input_ids'].to(device=device),
+                            attention_mask=data['attention_mask'].to(device=device),
+                            token_type_ids=data['token_type_ids'].to(device=device),
+                            out_pos=data['out_pos'].to(device=device))
+            outputa, outputb, outputc, outputd, outpute, outputf = outputs
+            _, ra = torch.max(outputa, dim=1)
+            _, rb = torch.max(outputb, dim=1)
+            _, rc = torch.max(outputc, dim=1)
+            _, rd = torch.max(outputd, dim=1)
+            _, re = torch.max(outpute, dim=1)
+            _, rf = torch.max(outputf, dim=1)
+            r = torch.stack([ra, rb, rc, rd, re, rf], dim=0)
+            r = r.T
+            results.append(r)
+        results = torch.cat(results, dim=0)
+        return results
+
+
+def predict_result(df, fold_num):
+    ########## DataLoader ##########
+    test_dataset = TestDataset(df)
+    test_dataloader = torch.utils.data.DataLoader(test_dataset,
+                                                  batch_size=my_config.batch_size,
+                                                  shuffle=False)
+
+    ########## model ##########
+    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
+    model_config.output_hidden_states = True
+    model = ModelClf(config=model_config)
+    model.load_state_dict(torch.load('./outputs/modelv1_checkpoint%d.pt' % fold_num))  # , map_location=torch.device('cpu')
+    model = model.to(device=device)
+
+    results = predicting(model, test_dataloader, device)
+    results = results.cpu().numpy()
+    results = results.astype(str)
+    emotion = [','.join(i) for i in results]
+    test_df['emotion%d' % fold_num] = emotion
+    submission = test_df.loc[:, ['id', 'emotion%d' % fold_num]]
+    submission.to_csv('./outputs/submission%d.csv' % fold_num, sep='\t', header=True, index=False)
+
+
 if __name__ == '__main__':
     df = train_df
     idx_shuffled = np.random.permutation(df.shape[0])  # 保证只打乱一次下标
@@ -311,8 +399,13 @@ if __name__ == '__main__':
         val_loss, epoch_count = main(df=df, fold_num=k, idx_shuffled=idx_shuffled)
         val_losses.append(val_loss)
         epoch_counts.append(epoch_count)
-    print('===== result =====')
+
+        predict_result(test_df, k)  # 预测
+
+    print('===== train_result =====')
     print(val_losses)
     print(epoch_counts)
+
+
 
 

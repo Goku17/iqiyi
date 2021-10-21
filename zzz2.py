@@ -109,3 +109,8 @@ with open('./outputs/char_lis', 'rb') as f:
 tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
                                                             do_lower_case=False)
 tokenizer.add_tokens(char_lis)
+
+
+
+
+

@@ -91,7 +91,8 @@ test_df.to_csv('./outputs/test_df.csv', header=True, index=False)
 train_df_nodup = train_df.drop_duplicates(subset=['content'], ignore_index=True)
 test_df_nodup = test_df.drop_duplicates(subset=['content'], ignore_index=True)
 df_nodup = pd.concat([train_df_nodup, test_df_nodup], axis=0, join='inner', ignore_index=True)
-# 结合前文
+
+# 将文本长度填充到128左右
 context_train_test = [df_nodup['content'][0]]
 for text in df_nodup['content'][1:]:
     pre_len = len(context_train_test[-1])
@@ -100,7 +101,6 @@ for text in df_nodup['content'][1:]:
         context_train_test[-1] += text
     else:
         context_train_test.append(text)
-
 
 with open('./outputs/context_train_test', 'wb') as f:
     pickle.dump(context_train_test, f)

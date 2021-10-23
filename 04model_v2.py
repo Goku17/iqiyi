@@ -1,4 +1,4 @@
-# model_v1不考虑上下文
+# model_v2考虑上下文
 import numpy as np
 import pandas as pd
 import random
@@ -40,6 +40,39 @@ test_df = pd.read_csv('./outputs/test_df.csv', header=0, index_col=None)
 with open('./outputs/char_lis', 'rb') as f:
     char_lis = pickle.load(f)
 
+# 去重
+train_df_nodup = train_df.drop_duplicates(subset=['content'], ignore_index=True)
+test_df_nodup = test_df.drop_duplicates(subset=['content'], ignore_index=True)
+
+# 结合上文
+def create_context(df_nodup, context_len = 128):
+    context_dic = {df_nodup['content'][0]:df_nodup['content'][0]}
+    for idx, text in enumerate(df_nodup['content'][1:], 1):
+        if text not in context_dic:
+            context_dic[text] = text
+            text_len = len(text)
+            pre_idx = idx-1
+            while pre_idx >= 0:
+                pre_text = df_nodup['content'][pre_idx]
+                pre_len = len(pre_text)
+                if text_len + pre_len <= context_len:
+                    context_dic[text] = pre_text + context_dic[text]
+                    text_len += pre_len
+                    pre_idx -= 1
+                else:
+                    break
+    return context_dic
+
+def write_pickle(file, filepath):
+    with open(filepath, 'wb') as f:
+        pickle.dump(file, f)
+
+context_train_dic = create_context(train_df_nodup)
+context_test_dic = create_context(test_df_nodup)
+# write_pickle(context_train_dic, './outputs/context_train_dic')
+# write_pickle(context_test_dic, './outputs/context_test_dic')
+
+
 # 删除情感为空的样本
 drop_idx_train = [i for i, j in enumerate(train_df['emotions']) if not isinstance(j, str)]
 train_df.drop(index=drop_idx_train, inplace=True)
@@ -79,7 +112,7 @@ my_config = Config()
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, df):
+    def __init__(self, df, context_dic):
         self.text = df['content']
         self.char = df["character"]
         self.emo_a = df["emo_a"]
@@ -89,12 +122,14 @@ class Dataset(torch.utils.data.Dataset):
         self.emo_e = df["emo_e"]
         self.emo_f = df["emo_f"]
         self.tokenizer = my_config.tokenizer
+        self.context_dic = context_dic
 
     def __len__(self):
         return len(self.text)
 
     def __getitem__(self, item):
         text = self.text[item]
+        context_text = self.context_dic[text]
         char = self.char[item]
         emo_a = self.emo_a[item]
         emo_b = self.emo_b[item]
@@ -103,7 +138,7 @@ class Dataset(torch.utils.data.Dataset):
         emo_e = self.emo_e[item]
         emo_f = self.emo_f[item]
 
-        encoded_inputs = self.tokenizer(text,
+        encoded_inputs = self.tokenizer(context_text,
                                         padding='max_length',
                                         truncation=True,
                                         max_length=my_config.max_len_char)
@@ -111,6 +146,9 @@ class Dataset(torch.utils.data.Dataset):
             char_id = self.tokenizer.convert_tokens_to_ids(char)
             try:
                 out_pos = encoded_inputs["input_ids"].index(char_id)
+                # todo model_v3
+                # inputids = self.tokenizer(text)["input_ids"]
+                # out_pos = inputids.index(char_id) - len(inputids) + sum(encoded_inputs["attention_mask"])
             except:
                 out_pos = 0
         else:

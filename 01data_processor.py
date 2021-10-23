@@ -93,11 +93,12 @@ test_df_nodup = test_df.drop_duplicates(subset=['content'], ignore_index=True)
 df_nodup = pd.concat([train_df_nodup, test_df_nodup], axis=0, join='inner', ignore_index=True)
 
 # 将文本长度填充到128左右
+context_len = 128
 context_train_test = [df_nodup['content'][0]]
 for text in df_nodup['content'][1:]:
     pre_len = len(context_train_test[-1])
     cur_len = len(text)
-    if cur_len + pre_len < 128:
+    if cur_len + pre_len < context_len:
         context_train_test[-1] += text
     else:
         context_train_test.append(text)

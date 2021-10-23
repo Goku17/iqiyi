@@ -1,16 +1,4 @@
 # model_v1不考虑上下文
-'''
-(1)任务：剧本角色情感识别
-(2)评价指标RMSE
-(3)train_dataset_v2.tsv: 以英文制表符分隔
-    1)有些样本有角色但没有情感【也就是情感为空】
-    2)有些样本没有角色但有情感【包括情感全为0】
-    3)有些样本没有角色也没有情感【也就是情感为空】
-    4)情感取值范围[0, 1, 2, 3]
-
-'''
-
-
 import sys  # todo
 sys.path.append('../input/dataiqiyi')
 import numpy as np

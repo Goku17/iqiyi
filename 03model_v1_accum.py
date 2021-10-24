@@ -138,7 +138,7 @@ class ModelClf(transformers.BertPreTrainedModel):
         self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('inputs/chinese-roberta-wwm-ext',
                                                                      config=config)  # 哈工大预训练模型
         self.bert_mlm.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
-        self.bert_mlm.load_state_dict(torch.load('./outputs/mlm_checkpoint0.pt'))
+        self.bert_mlm.load_state_dict(torch.load('./outputs/mlm_checkpoint0_accu.pt'))
         self.la = torch.nn.Linear(768, 4)
         self.lb = torch.nn.Linear(768, 4)
         self.lc = torch.nn.Linear(768, 4)

@@ -140,7 +140,7 @@ class ModelClf(transformers.BertPreTrainedModel):
         self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('../input/hflchineserobertawwmext',
                                                                      config=config)  # 哈工大预训练模型
         self.bert_mlm.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
-        self.bert_mlm.load_state_dict(torch.load('../input/iqiyi-cp/mlm_checkpoint0.pt'))
+        self.bert_mlm.load_state_dict(torch.load('../input/iqiyi-cp/mlm_checkpoint0_nonaccu.pt'))
         self.la = torch.nn.Linear(768, 4)
         self.lb = torch.nn.Linear(768, 4)
         self.lc = torch.nn.Linear(768, 4)
@@ -170,8 +170,7 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
     model.train()
     dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    accu_iter = my_config.batch_size_accu / my_config.batch_size
-    for batch_idx, data in enumerate(dataloader_tqdm):
+    for data in dataloader_tqdm:
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
@@ -184,13 +183,10 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
         lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
         loss = lossa + lossb + lossc + lossd + losse + lossf
         losses += loss.item()
-
-        loss = loss / accu_iter
+        optimizer.zero_grad()
         loss.backward()  # 可以释放计算图
-        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
-            optimizer.step()
-            optimizer.zero_grad()
-            # scheduler.step()
+        optimizer.step()
+        # scheduler.step()
         dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses / len(dataloader)  # 一个epoch上平均每个样本的损失
 

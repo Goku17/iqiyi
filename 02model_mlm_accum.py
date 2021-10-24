@@ -209,7 +209,7 @@ def main(df, fold_num, idx_shuffled):
 
     early_stopping = EarlyStopping(patience=my_config.patience,
                                    verbose=True,
-                                   path='./outputs/mlm_checkpoint%d.pt' % fold_num)
+                                   path='./outputs/mlm_checkpoint%d_accu.pt' % fold_num)
     epoch_record = None
     for epoch in range(1, my_config.n_epochs+1):
         epoch_record = epoch

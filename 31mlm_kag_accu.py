@@ -10,6 +10,8 @@
 '''
 
 
+import sys  # todo
+sys.path.append('../input/dataiqiyi')
 import numpy as np
 import pandas as pd
 import random
@@ -46,9 +48,9 @@ torch.manual_seed(seed)
 # pd.set_option('display.max_rows', None)
 
 
-with open('./outputs/char_lis', 'rb') as f:
+with open('../input/dataiqiyi/char_lis', 'rb') as f:  # todo
     char_lis = pickle.load(f)
-with open('./outputs/context_train_test', 'rb') as f:
+with open('../input/dataiqiyi/context_train_test', 'rb') as f:
     context_train_test = pickle.load(f)
 
 
@@ -64,8 +66,8 @@ class Config:
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
         self.max_len_char = max_len_char  # (412-4)+2
         self.ways_of_mask = ways_of_mask  # dynamic masking
-        self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
-                                                                    do_lower_case=False)
+        self.tokenizer = transformers.BertTokenizer.from_pretrained('../input/hflchineserobertawwmext',
+                                                                    do_lower_case=False)  # todo
         self.tokenizer.add_tokens(char_lis)  # todo
 
 
@@ -116,17 +118,21 @@ def training(model, dataloader, optimizer, scheduler, device):
     model.train()
     dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    for data in dataloader_tqdm:
+    accu_iter = my_config.batch_size_accu / my_config.batch_size
+    for batch_idx, data in enumerate(dataloader_tqdm):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
                         labels=data['labels'].to(device=device))
         loss = outputs.loss
         losses += loss.item()
-        optimizer.zero_grad()
+
+        loss = loss / accu_iter
         loss.backward()  # 可以释放计算图
-        optimizer.step()
-        # scheduler.step()
+        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
+            optimizer.step()
+            optimizer.zero_grad()
+            # scheduler.step()
         dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses/len(dataloader)  # 一个epoch上平均每个样本的损失
 
@@ -180,8 +186,8 @@ def main(df, fold_num, idx_shuffled):
                                                  shuffle=False)
 
     ########## model ##########
-    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
-    model = transformers.BertForMaskedLM.from_pretrained('inputs/chinese-roberta-wwm-ext',
+    model_config = transformers.BertConfig.from_pretrained('../input/hflchineserobertawwmext/config.json')  # todo
+    model = transformers.BertForMaskedLM.from_pretrained('../input/hflchineserobertawwmext',
                                                          config=model_config)  # 哈工大预训练模型
     model.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
     model = model.to(device=device)
@@ -205,7 +211,7 @@ def main(df, fold_num, idx_shuffled):
 
     early_stopping = EarlyStopping(patience=my_config.patience,
                                    verbose=True,
-                                   path='./outputs/mlm_checkpoint%d_nonaccu.pt' % fold_num)
+                                   path='./outputs/mlm_checkpoint%d_accu.pt' % fold_num)
     epoch_record = None
     for epoch in range(1, my_config.n_epochs+1):
         epoch_record = epoch

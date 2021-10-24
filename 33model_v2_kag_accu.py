@@ -1,4 +1,6 @@
-# model_v1不考虑上下文
+# model_v2考虑上下文
+import sys  # todo
+sys.path.append('../input/dataiqiyi')
 import numpy as np
 import pandas as pd
 import random
@@ -35,10 +37,40 @@ torch.manual_seed(seed)
 # pd.set_option('display.max_rows', None)
 
 
-train_df = pd.read_csv('./outputs/train_df.csv', header=0, index_col=None)
-test_df = pd.read_csv('./outputs/test_df.csv', header=0, index_col=None)
-with open('./outputs/char_lis', 'rb') as f:
+train_df = pd.read_csv('../input/dataiqiyi/train_df.csv', header=0, index_col=None)
+test_df = pd.read_csv('../input/dataiqiyi/test_df.csv', header=0, index_col=None)
+with open('../input/dataiqiyi/char_lis', 'rb') as f:
     char_lis = pickle.load(f)
+
+# 去重
+train_df_nodup = train_df.drop_duplicates(subset=['content'], ignore_index=True)
+test_df_nodup = test_df.drop_duplicates(subset=['content'], ignore_index=True)
+
+# 结合上文
+def create_context(df_nodup, context_len = 128):
+    context_dic = {df_nodup['content'][0]:df_nodup['content'][0]}
+    for idx, text in enumerate(df_nodup['content'][1:], 1):
+        if text not in context_dic:
+            context_dic[text] = text
+            text_len = len(text)
+            pre_idx = idx-1
+            while pre_idx >= 0:
+                pre_text = df_nodup['content'][pre_idx]
+                pre_len = len(pre_text)
+                if text_len + pre_len <= context_len:
+                    context_dic[text] = pre_text + context_dic[text]
+                    text_len += pre_len
+                    pre_idx -= 1
+                else:
+                    break
+    return context_dic
+
+def write_pickle(file, filepath):
+    with open(filepath, 'wb') as f:
+        pickle.dump(file, f)
+
+context_train_dic = create_context(train_df_nodup)
+context_test_dic = create_context(test_df_nodup)
 
 # 删除情感为空的样本
 drop_idx_train = [i for i, j in enumerate(train_df['emotions']) if not isinstance(j, str)]
@@ -70,7 +102,7 @@ class Config:
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
         self.max_len_char = max_len_char  # (412-4)+2
         self.ways_of_mask = ways_of_mask  # dynamic masking
-        self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
+        self.tokenizer = transformers.BertTokenizer.from_pretrained('../input/hflchineserobertawwmext',
                                                                     do_lower_case=False)
         self.tokenizer.add_tokens(char_lis)  # todo
 
@@ -79,7 +111,7 @@ my_config = Config()
 
 
 class Dataset(torch.utils.data.Dataset):
-    def __init__(self, df):
+    def __init__(self, df, context_dic):
         self.text = df['content']
         self.char = df["character"]
         self.emo_a = df["emo_a"]
@@ -89,12 +121,15 @@ class Dataset(torch.utils.data.Dataset):
         self.emo_e = df["emo_e"]
         self.emo_f = df["emo_f"]
         self.tokenizer = my_config.tokenizer
+        self.context_dic = context_dic
+
 
     def __len__(self):
         return len(self.text)
 
     def __getitem__(self, item):
         text = self.text[item]
+        context_text = self.context_dic[text]
         char = self.char[item]
         emo_a = self.emo_a[item]
         emo_b = self.emo_b[item]
@@ -103,7 +138,7 @@ class Dataset(torch.utils.data.Dataset):
         emo_e = self.emo_e[item]
         emo_f = self.emo_f[item]
 
-        encoded_inputs = self.tokenizer(text,
+        encoded_inputs = self.tokenizer(context_text,
                                         padding='max_length',
                                         truncation=True,
                                         max_length=my_config.max_len_char)
@@ -111,6 +146,9 @@ class Dataset(torch.utils.data.Dataset):
             char_id = self.tokenizer.convert_tokens_to_ids(char)
             try:
                 out_pos = encoded_inputs["input_ids"].index(char_id)
+                # todo model_v3
+                # inputids = self.tokenizer(text)["input_ids"]
+                # out_pos = inputids.index(char_id) - len(inputids) + sum(encoded_inputs["attention_mask"])
             except:
                 out_pos = 0
         else:
@@ -135,10 +173,10 @@ class ModelClf(transformers.BertPreTrainedModel):
 
     def __init__(self, config):
         super(ModelClf, self).__init__(config)
-        self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('inputs/chinese-roberta-wwm-ext',
+        self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('../input/hflchineserobertawwmext',
                                                                      config=config)  # 哈工大预训练模型
         self.bert_mlm.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
-        self.bert_mlm.load_state_dict(torch.load('./outputs/mlm_checkpoint0_nonaccu.pt'))
+        self.bert_mlm.load_state_dict(torch.load('../input/iqiyi-cp/mlm_checkpoint0_accu.pt'))
         self.la = torch.nn.Linear(768, 4)
         self.lb = torch.nn.Linear(768, 4)
         self.lc = torch.nn.Linear(768, 4)
@@ -168,7 +206,8 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
     model.train()
     dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    for data in dataloader_tqdm:
+    accu_iter = my_config.batch_size_accu / my_config.batch_size
+    for batch_idx, data in enumerate(dataloader_tqdm):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
@@ -181,10 +220,13 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
         lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
         loss = lossa + lossb + lossc + lossd + losse + lossf
         losses += loss.item()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        # scheduler.step()
+
+        loss = loss / accu_iter
+        loss.backward()  # 可以释放计算图
+        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
+            optimizer.step()
+            optimizer.zero_grad()
+            # scheduler.step()
         dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses / len(dataloader)  # 一个epoch上平均每个样本的损失
 
@@ -246,7 +288,7 @@ def main(df, fold_num, idx_shuffled):
                                                  shuffle=False)
 
     ########## model ##########
-    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
+    model_config = transformers.BertConfig.from_pretrained('../input/hflchineserobertawwmext/config.json')
     model_config.output_hidden_states = True
     model = ModelClf(config=model_config)
     model = model.to(device=device)
@@ -358,7 +400,7 @@ def predict_result(df, fold_num):
                                                   shuffle=False)
 
     ########## model ##########
-    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
+    model_config = transformers.BertConfig.from_pretrained('../input/hflchineserobertawwmext/config.json')
     model_config.output_hidden_states = True
     model = ModelClf(config=model_config)
     model.load_state_dict(torch.load('./outputs/modelv1_checkpoint%d.pt' % fold_num))  # , map_location=torch.device('cpu')
@@ -389,5 +431,7 @@ if __name__ == '__main__':
     print('===== train_result =====')
     print(val_losses)
     print(epoch_counts)
+
+
 
 

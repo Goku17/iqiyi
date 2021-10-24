@@ -1,4 +1,6 @@
 # model_v1不考虑上下文
+import sys  # todo
+sys.path.append('../input/dataiqiyi')
 import numpy as np
 import pandas as pd
 import random
@@ -35,9 +37,9 @@ torch.manual_seed(seed)
 # pd.set_option('display.max_rows', None)
 
 
-train_df = pd.read_csv('./outputs/train_df.csv', header=0, index_col=None)
-test_df = pd.read_csv('./outputs/test_df.csv', header=0, index_col=None)
-with open('./outputs/char_lis', 'rb') as f:
+train_df = pd.read_csv('../input/dataiqiyi/train_df.csv', header=0, index_col=None)
+test_df = pd.read_csv('../input/dataiqiyi/test_df.csv', header=0, index_col=None)
+with open('../input/dataiqiyi/char_lis', 'rb') as f:
     char_lis = pickle.load(f)
 
 # 删除情感为空的样本
@@ -70,7 +72,7 @@ class Config:
         self.lr = lr  # 学习率参考https://github.com/ymcui/Chinese-BERT-wwm
         self.max_len_char = max_len_char  # (412-4)+2
         self.ways_of_mask = ways_of_mask  # dynamic masking
-        self.tokenizer = transformers.BertTokenizer.from_pretrained('inputs/chinese-roberta-wwm-ext',
+        self.tokenizer = transformers.BertTokenizer.from_pretrained('../input/hflchineserobertawwmext',
                                                                     do_lower_case=False)
         self.tokenizer.add_tokens(char_lis)  # todo
 
@@ -135,10 +137,10 @@ class ModelClf(transformers.BertPreTrainedModel):
 
     def __init__(self, config):
         super(ModelClf, self).__init__(config)
-        self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('inputs/chinese-roberta-wwm-ext',
+        self.bert_mlm = transformers.BertForMaskedLM.from_pretrained('../input/hflchineserobertawwmext',
                                                                      config=config)  # 哈工大预训练模型
         self.bert_mlm.resize_token_embeddings(len(my_config.tokenizer))  # todo word_embedding.shape=(21151,768)
-        self.bert_mlm.load_state_dict(torch.load('./outputs/mlm_checkpoint0_nonaccu.pt'))
+        self.bert_mlm.load_state_dict(torch.load('../input/iqiyi-cp/mlm_checkpoint0_accu.pt'))
         self.la = torch.nn.Linear(768, 4)
         self.lb = torch.nn.Linear(768, 4)
         self.lc = torch.nn.Linear(768, 4)
@@ -168,7 +170,8 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
     model.train()
     dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    for data in dataloader_tqdm:
+    accu_iter = my_config.batch_size_accu / my_config.batch_size
+    for batch_idx, data in enumerate(dataloader_tqdm):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
@@ -181,10 +184,13 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
         lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
         loss = lossa + lossb + lossc + lossd + losse + lossf
         losses += loss.item()
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
-        # scheduler.step()
+
+        loss = loss / accu_iter
+        loss.backward()  # 可以释放计算图
+        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
+            optimizer.step()
+            optimizer.zero_grad()
+            # scheduler.step()
         dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses / len(dataloader)  # 一个epoch上平均每个样本的损失
 
@@ -246,7 +252,7 @@ def main(df, fold_num, idx_shuffled):
                                                  shuffle=False)
 
     ########## model ##########
-    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
+    model_config = transformers.BertConfig.from_pretrained('../input/hflchineserobertawwmext/config.json')
     model_config.output_hidden_states = True
     model = ModelClf(config=model_config)
     model = model.to(device=device)
@@ -358,7 +364,7 @@ def predict_result(df, fold_num):
                                                   shuffle=False)
 
     ########## model ##########
-    model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
+    model_config = transformers.BertConfig.from_pretrained('../input/hflchineserobertawwmext/config.json')
     model_config.output_hidden_states = True
     model = ModelClf(config=model_config)
     model.load_state_dict(torch.load('./outputs/modelv1_checkpoint%d.pt' % fold_num))  # , map_location=torch.device('cpu')
@@ -389,5 +395,7 @@ if __name__ == '__main__':
     print('===== train_result =====')
     print(val_losses)
     print(epoch_counts)
+
+
 
 

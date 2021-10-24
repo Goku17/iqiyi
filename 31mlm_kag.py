@@ -118,21 +118,17 @@ def training(model, dataloader, optimizer, scheduler, device):
     model.train()
     dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    accu_iter = my_config.batch_size_accu / my_config.batch_size
-    for batch_idx, data in enumerate(dataloader_tqdm):
+    for data in dataloader_tqdm:
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
                         labels=data['labels'].to(device=device))
         loss = outputs.loss
         losses += loss.item()
-
-        loss = loss / accu_iter
+        optimizer.zero_grad()
         loss.backward()  # 可以释放计算图
-        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
-            optimizer.step()
-            optimizer.zero_grad()
-            # scheduler.step()
+        optimizer.step()
+        # scheduler.step()
         dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses/len(dataloader)  # 一个epoch上平均每个样本的损失
 
@@ -211,7 +207,7 @@ def main(df, fold_num, idx_shuffled):
 
     early_stopping = EarlyStopping(patience=my_config.patience,
                                    verbose=True,
-                                   path='./outputs/mlm_checkpoint%d.pt' % fold_num)
+                                   path='./outputs/mlm_checkpoint%d_nonaccu.pt' % fold_num)
     epoch_record = None
     for epoch in range(1, my_config.n_epochs+1):
         epoch_record = epoch

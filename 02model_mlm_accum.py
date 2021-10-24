@@ -116,17 +116,21 @@ def training(model, dataloader, optimizer, scheduler, device):
     model.train()
     dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    for data in dataloader_tqdm:
+    accu_iter = my_config.batch_size_accu / my_config.batch_size
+    for batch_idx, data in enumerate(dataloader_tqdm):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
                         labels=data['labels'].to(device=device))
         loss = outputs.loss
         losses += loss.item()
-        optimizer.zero_grad()
+
+        loss = loss / accu_iter
         loss.backward()  # 可以释放计算图
-        optimizer.step()
-        # scheduler.step()
+        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
+            optimizer.step()
+            optimizer.zero_grad()
+            # scheduler.step()
         dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses/len(dataloader)  # 一个epoch上平均每个样本的损失
 
@@ -242,6 +246,14 @@ if __name__ == '__main__':
     print(val_losses)
     print(epoch_counts)
 
+
+
+
+# todo 类别不平衡：情感的不平衡、情感强度的不平衡
+#  探索上下文
+
+
+# todo add_tokens/梯度累计
 
 
 

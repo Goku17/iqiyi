@@ -206,7 +206,8 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
     model.train()
     dataloader_tqdm = tqdm.tqdm(dataloader)
     losses = 0
-    for data in dataloader_tqdm:
+    accu_iter = my_config.batch_size_accu / my_config.batch_size
+    for batch_idx, data in enumerate(dataloader_tqdm):
         outputs = model(input_ids=data['input_ids'].to(device=device),
                         attention_mask=data['attention_mask'].to(device=device),
                         token_type_ids=data['token_type_ids'].to(device=device),
@@ -219,10 +220,13 @@ def training(model, dataloader, loss_fn, optimizer, scheduler, device):
         lossf = loss_fn(outputs[5], data['emo_f'].to(device=device))
         loss = lossa + lossb + lossc + lossd + losse + lossf
         losses += loss.item()
-        optimizer.zero_grad()
+
+        loss = loss / accu_iter
         loss.backward()  # 可以释放计算图
-        optimizer.step()
-        # scheduler.step()
+        if ((batch_idx + 1) % accu_iter == 0) or (batch_idx + 1 == len(dataloader)):
+            optimizer.step()
+            optimizer.zero_grad()
+            # scheduler.step()
         dataloader_tqdm.set_postfix({'loss': loss.item()})  # 当前batch上平均每个样本的loss
     return losses / len(dataloader)  # 一个epoch上平均每个样本的损失
 

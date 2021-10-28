@@ -274,8 +274,8 @@ def main(df, fold_num, idx_shuffled):
     val_df.reset_index(drop=True, inplace=True)
 
     ########## DataLoader ##########
-    train_dataset = Dataset(train_df)
-    val_dataset = Dataset(val_df)
+    train_dataset = Dataset(train_df, context_train_dic)
+    val_dataset = Dataset(val_df, context_train_dic)
     train_dataloader = torch.utils.data.DataLoader(train_dataset,
                                                    batch_size=my_config.batch_size,
                                                    shuffle=True)
@@ -308,7 +308,7 @@ def main(df, fold_num, idx_shuffled):
 
     early_stopping = EarlyStopping(patience=my_config.patience,
                                    verbose=True,
-                                   path='./outputs/modelv1_checkpoint%d.pt' % fold_num)
+                                   path='./outputs/modelv2_checkpoint%d.pt' % fold_num)
     loss_fn = nn.CrossEntropyLoss()
 
     epoch_record = None
@@ -331,19 +331,21 @@ def main(df, fold_num, idx_shuffled):
 
 
 class TestDataset(torch.utils.data.Dataset):
-    def __init__(self, df):
+    def __init__(self, df, context_dic):
         self.text = df['content']
         self.char = df["character"]
         self.tokenizer = my_config.tokenizer
+        self.context_dic = context_dic
 
     def __len__(self):
         return len(self.text)
 
     def __getitem__(self, item):
         text = self.text[item]
+        context_text = self.context_dic[text]
         char = self.char[item]
 
-        encoded_inputs = self.tokenizer(text,
+        encoded_inputs = self.tokenizer(context_text,
                                         padding='max_length',
                                         truncation=True,
                                         max_length=my_config.max_len_char)
@@ -351,6 +353,9 @@ class TestDataset(torch.utils.data.Dataset):
             char_id = self.tokenizer.convert_tokens_to_ids(char)
             try:
                 out_pos = encoded_inputs["input_ids"].index(char_id)
+                # todo model_v3
+                # inputids = self.tokenizer(text)["input_ids"]
+                # out_pos = inputids.index(char_id) - len(inputids) + sum(encoded_inputs["attention_mask"])
             except:
                 out_pos = 0
         else:
@@ -390,7 +395,7 @@ def predicting(model, dataloader, device):
 
 def predict_result(df, fold_num):
     ########## DataLoader ##########
-    test_dataset = TestDataset(df)
+    test_dataset = TestDataset(df, context_test_dic)
     test_dataloader = torch.utils.data.DataLoader(test_dataset,
                                                   batch_size=my_config.batch_size,
                                                   shuffle=False)
@@ -399,7 +404,7 @@ def predict_result(df, fold_num):
     model_config = transformers.BertConfig.from_pretrained('inputs/chinese-roberta-wwm-ext/config.json')
     model_config.output_hidden_states = True
     model = ModelClf(config=model_config)
-    model.load_state_dict(torch.load('./outputs/modelv1_checkpoint%d.pt' % fold_num))  # , map_location=torch.device('cpu')
+    model.load_state_dict(torch.load('./outputs/modelv2_checkpoint%d.pt' % fold_num))  # , map_location=torch.device('cpu')
     model = model.to(device=device)
 
     results = predicting(model, test_dataloader, device)

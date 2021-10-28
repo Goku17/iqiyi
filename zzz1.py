@@ -11,3 +11,10 @@
 #         cont_char_map_test[cont] = []
 #     if isinstance(char, str):
 #         cont_char_map_test[cont].append(char)
+
+'''
+cp=accu, model=accu: 1.679068; 0.67835057885   ***tmp_optimum***
+cp=accu, model=nonaccu: 1.667455; 0.67640259760
+cp=nonaccu, model=accu:
+cp=nonaccu, model=nonaccu: 1.666017; 0.67607338604
+'''
